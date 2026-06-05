@@ -1,0 +1,12 @@
+{
+  "name": "webrtc-signaling",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "node server.cjs",
+    "dev": "node signal.js"
+  },
+  "dependencies": {
+    "ws": "^8.19.0"
+  }
+}

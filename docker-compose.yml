@@ -6,7 +6,9 @@ services:
       context: .
       dockerfile: Dockerfile.frontend
     ports:
-      - "80:80"
+      - "8480:80"
+    env_file:
+      - .env
     restart: unless-stopped
     depends_on:
       - signaling
@@ -14,7 +16,9 @@ services:
   signaling:
     build:
       context: .
-      dockerfile: Dockerfile.1
-    expose:
-      - "3001"
+      dockerfile: Dockerfile.signaling
+    ports:
+      - "8481:3001"
+    env_file:
+      - .env
     restart: unless-stopped

@@ -1,0 +1,14 @@
+.env
+.env.*
+node_modules
+frontend/node_modules
+frontend/dist
+signaling/node_modules
+.git
+docs
+DOC
+kube-manifests
+dockerrun-b
+dockerrun-f
+test-results
+scripts
