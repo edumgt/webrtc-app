@@ -1,7 +1,0 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: webrtc
-  labels:
-    app.kubernetes.io/name: webrtc-vue
-    app.kubernetes.io/part-of: docker-advanced-webrtc-vue
