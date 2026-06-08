@@ -189,8 +189,8 @@ export IMAGE_TAG=latest
 실행:
 
 ```bash
-chmod +x /tmp/workspace/edumgt/webrtc-app/scripts/provision-ec2-k8s-deploy.sh
-/tmp/workspace/edumgt/webrtc-app/scripts/provision-ec2-k8s-deploy.sh
+chmod +x ./scripts/provision-ec2-k8s-deploy.sh
+./scripts/provision-ec2-k8s-deploy.sh
 ```
 
 > 보안 그룹에 최소 `22`, `30080`, `30081` 인바운드 허용이 필요합니다.
