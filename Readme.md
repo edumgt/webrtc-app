@@ -55,8 +55,8 @@ Vue 3 기반 협업형 WebRTC 애플리케이션입니다.
 | 컨테이너 | **Docker** + Docker Compose | 멀티 서비스 로컬 실행 |
 | 베이스 이미지 | `node:20-alpine` | 경량 프로덕션 이미지 |
 | 멀티스테이지 빌드 | Dockerfile.frontend | 빌드 의존성을 최종 이미지에서 제거 |
-| CI/CD | **GitHub Actions** | Docker Hub push + EKS rollout |
-| 컨테이너 레지스트리 | **Docker Hub** | `edumgt/webrtc-frontend:latest`, `edumgt/webrtc-signaling:latest` |
+| CI/CD | **GitHub Actions** | GHCR push + EKS rollout |
+| 컨테이너 레지스트리 | **GitHub Container Registry (GHCR)** | `ghcr.io/edumgt/webrtc-frontend:latest`, `ghcr.io/edumgt/webrtc-signaling:latest` |
 | 오케스트레이션 | **Amazon EKS** (Kubernetes) | namespace `webrtc` 안에 frontend/signaling deployment |
 | 모니터링 | **CloudWatch Logs** | System 메뉴 차트 데이터 소스 (API 폴백: 브라우저 수집 로그) |
 
@@ -225,7 +225,7 @@ npm run dev:wsl
 flowchart LR
     A[Developer] -->|git push main| B[GitHub Repository]
     B --> C[GitHub Actions]
-    C -->|docker build + push latest| D[Docker Hub]
+    C -->|docker build + push latest| D[GHCR]
     C -->|kubectl apply + rollout restart| E[Amazon EKS]
     D -->|imagePullPolicy Always| E
 
