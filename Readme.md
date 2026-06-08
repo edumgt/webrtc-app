@@ -156,6 +156,47 @@ VITE_SIGNAL_URL=wss://your-load-balancer.ap-northeast-2.elb.amazonaws.com
 
 ---
 
+## AWS EC2 + Kubernetes 자동 배포 스크립트
+
+`/scripts/provision-ec2-k8s-deploy.sh`는 아래 과정을 한 번에 수행합니다.
+
+1. ECR 리포지토리 생성 확인
+2. frontend/signaling Docker 이미지 빌드 및 ECR 푸시
+3. EC2 인스턴스 생성
+4. EC2에 k3s(Kubernetes) 설치
+5. webrtc namespace, deployment, service 생성 및 pod rollout 확인
+
+필수 환경변수:
+
+```bash
+export AWS_REGION=ap-northeast-2
+export EC2_AMI_ID=ami-xxxxxxxxxxxxxxxxx
+export EC2_KEY_NAME=my-keypair
+export EC2_SECURITY_GROUP_ID=sg-xxxxxxxxxxxxxxxxx
+export EC2_SUBNET_ID=subnet-xxxxxxxxxxxxxxxxx
+export SSH_PRIVATE_KEY_PATH=/absolute/path/to/my-keypair.pem
+```
+
+선택 환경변수:
+
+```bash
+export AWS_PROFILE=default
+export EC2_INSTANCE_TYPE=t3.large
+export EC2_IAM_INSTANCE_PROFILE_NAME=ec2-ecr-role
+export IMAGE_TAG=latest
+```
+
+실행:
+
+```bash
+chmod +x ./scripts/provision-ec2-k8s-deploy.sh
+./scripts/provision-ec2-k8s-deploy.sh
+```
+
+> 보안 그룹에 최소 `22`, `30080`, `30081` 인바운드 허용이 필요합니다.
+
+---
+
 ## 로컬 개발 (Docker 없이)
 
 ```bash
