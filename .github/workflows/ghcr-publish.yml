@@ -56,3 +56,50 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+  deploy-to-eks:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --name "${{ secrets.EKS_CLUSTER_NAME }}" --region "${{ secrets.AWS_REGION }}"
+
+      - name: Apply Kubernetes manifests
+        run: |
+          kubectl apply -f kube-manifests/01-namespace.yml
+          kubectl apply -f kube-manifests/02-webrtc-deployment.yml
+          kubectl apply -f kube-manifests/03-webrtc-loadbalancer-service.yml
+          kubectl apply -f kube-manifests/04-webrtc-frontend-deployment.yml
+
+      - name: Inject runtime frontend signaling URL
+        run: |
+          kubectl -n webrtc set env deployment/webrtc-frontend \
+            VITE_SIGNAL_URL="${{ vars.VITE_SIGNAL_URL }}" \
+            VITE_SIGNAL_PORT="${{ vars.VITE_SIGNAL_PORT }}"
+
+      - name: Restart deployments to pull latest images
+        run: |
+          kubectl -n webrtc rollout restart deployment/webrtc-signaling
+          kubectl -n webrtc rollout restart deployment/webrtc-frontend
+
+      - name: Wait for rollout
+        run: |
+          kubectl -n webrtc rollout status deployment/webrtc-signaling --timeout=180s
+          kubectl -n webrtc rollout status deployment/webrtc-frontend --timeout=180s

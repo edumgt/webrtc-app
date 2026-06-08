@@ -219,35 +219,47 @@ npm run dev:wsl
 
 ---
 
-## System Flow
+## CI/CD 빌드 · 배포 흐름
 
 ```mermaid
-flowchart LR
-    A[Developer] -->|git push main| B[GitHub Repository]
-    B --> C[GitHub Actions]
-    C -->|docker build + push latest| D[GHCR]
-    C -->|kubectl apply + rollout restart| E[Amazon EKS]
-    D -->|imagePullPolicy Always| E
+flowchart TD
+    DEV([Developer]) -->|git push / merge| MAIN[main branch\nGitHub]
 
-    subgraph E[Amazon EKS / namespace webrtc]
-      F[Frontend Deployment]
-      G[Signaling Deployment]
-      H[Frontend Service :80]
-      I[Signaling Service :3001]
-      J[Frontend Pod]
-      K[Signaling Pod]
-      F --> J
-      G --> K
-      H --> J
-      I --> K
+    MAIN --> GHA[GitHub Actions\nghcr-publish.yml]
+
+    subgraph BUILD["build-and-push (matrix, parallel)"]
+        direction TB
+        B1["Dockerfile.frontend\n→ webrtc-frontend"]
+        B2["Dockerfile.signaling\n→ webrtc-signaling"]
     end
 
-    L[Browser User] -->|HTTP| H
-    L -->|WebSocket ws://...:3001| I
-    J -->|ApexCharts / Admin UI| L
-    K -->|SDP / ICE relay| L
-    J --> M[CloudWatch Logs]
-    K --> M
+    GHA --> BUILD
+
+    BUILD -->|docker push\ntag: latest, sha| GHCR["ghcr.io/edumgt/\nwebrtc-frontend\nwebrtc-signaling"]
+
+    GHCR --> DEPLOY
+
+    subgraph DEPLOY["deploy-to-eks (needs: build-and-push)"]
+        direction TB
+        D1[AWS Credentials 설정]
+        D2[kubeconfig 업데이트]
+        D3[kubectl apply\nk8s manifests]
+        D4[env inject\nVITE_SIGNAL_URL / PORT]
+        D5[rollout restart\nwebrtc-signaling\nwebrtc-frontend]
+        D6[rollout status 대기\ntimeout: 180s]
+        D1 --> D2 --> D3 --> D4 --> D5 --> D6
+    end
+
+    subgraph EKS["AWS EKS — webrtc namespace"]
+        NS[01-namespace]
+        SIG[02-webrtc-signaling\nDeployment]
+        SVC[03-LoadBalancer\nService]
+        FE[04-webrtc-frontend\nDeployment]
+    end
+
+    D3 -->|kubectl apply| NS & SIG & SVC & FE
+    D5 -->|rollout restart| SIG & FE
+    GHCR -->|image pull| SIG & FE
 ```
 
 ## Sequence Diagram
@@ -321,3 +333,10 @@ System 메뉴는 아래 API 포맷을 기대합니다. API가 없을 경우 브�
 | [`Dockerfile.signaling`](./Dockerfile.signaling) | 시그널링 이미지 |
 | [`docker-compose.yml`](./docker-compose.yml) | 로컬 실행 구성 |
 | [`kube-manifests/`](./kube-manifests/) | EKS 배포 매니페스트 |
+
+
+---
+
+### ghcr 에 push
+
+![alt text](image.png)
