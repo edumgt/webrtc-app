@@ -54,6 +54,12 @@ function summarizeCandidate(candidate) {
   }
 }
 
+const defaultIceServers = [
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "stun:stun1.l.google.com:19302" },
+  { urls: "stun:stun2.l.google.com:19302" },
+]
+
 export default function useWebRTC(roomId, joined) {
   let ws
   let currentSignalUrl = buildSignalUrl()
@@ -65,6 +71,7 @@ export default function useWebRTC(roomId, joined) {
   const fileChannels = new Map()
   const drawChannels = new Map()
   const remoteMediaStreams = new Map()
+  const pendingCandidates = new Map()
   const clientId = Math.random().toString(36).substring(2, 10)
 
   const webrtc = reactive({
@@ -202,6 +209,41 @@ export default function useWebRTC(roomId, joined) {
     peers.forEach(refreshPeerTracks)
   }
 
+  function closePeer(remoteId) {
+    const pc = peers.get(remoteId)
+    if (pc) {
+      try {
+        pc.close()
+      } catch (err) {
+        console.warn(`[WebRTC] Error closing peer ${remoteId}`, err)
+      }
+      peers.delete(remoteId)
+    }
+
+    chatChannels.delete(remoteId)
+    fileChannels.delete(remoteId)
+    drawChannels.delete(remoteId)
+    remoteMediaStreams.delete(remoteId)
+    pendingCandidates.delete(remoteId)
+
+    refreshRemoteStreams()
+    webrtc.peerCount = peers.size
+    logWebRTC("peer", "peer cleaned up", { remoteId })
+  }
+
+  async function processPendingCandidates(remoteId, pc) {
+    const queue = pendingCandidates.get(remoteId) || []
+    while (queue.length > 0) {
+      const candidate = queue.shift()
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate))
+        logWebRTC("ice", "queued ICE candidate applied", { remoteId })
+      } catch (err) {
+        logWebRTC("ice", "failed applying queued ICE candidate", { remoteId, error: err.message })
+      }
+    }
+  }
+
   function joinRoom(overrideSignalUrl = "") {
     if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
       ws.close(1000, "reconnect")
@@ -231,23 +273,43 @@ export default function useWebRTC(roomId, joined) {
     ws.onmessage = async (event) => {
       const data = JSON.parse(event.data)
       if (data.sender === clientId) return
+      // 타겟이 지정된 경우 나를 향한 메시지가 아니면 무시
+      if (data.target && data.target !== clientId) return
+
       logWebRTC("signal", "message received", {
         type: data.type,
         roomId: data.roomId,
         sender: data.sender,
+        target: data.target,
       })
-      const pc = peers.get(data.sender) || createPeer(data.sender)
 
+      // 1) 새 피어 발견: 이중 생성 방지를 위해 바로 connectToPeer 호출
       if (data.type === "new-peer") {
         logWebRTC("signal", "new peer discovered", { remoteId: data.sender })
-        connectToPeer(data.sender)
-      } else if (data.type === "offer") {
+        await connectToPeer(data.sender)
+        return
+      }
+
+      // 2) 피어 퇴장 알림 처리
+      if (data.type === "peer-left") {
+        logWebRTC("signal", "peer left event received", { remoteId: data.sender })
+        closePeer(data.sender)
+        return
+      }
+
+      const pc = peers.get(data.sender) || createPeer(data.sender)
+
+      if (data.type === "offer") {
         logWebRTC("sdp", "remote offer received", summarizeSdp(data))
         await pc.setRemoteDescription(new RTCSessionDescription(data))
         logWebRTC("peer", "remote description applied", {
           remoteId: data.sender,
           signalingState: pc.signalingState,
         })
+
+        // 보류 중이던 ICE Candidate 적용
+        await processPendingCandidates(data.sender, pc)
+
         const answer = await pc.createAnswer()
         logWebRTC("sdp", "local answer created", summarizeSdp(answer))
         await pc.setLocalDescription(answer)
@@ -255,7 +317,8 @@ export default function useWebRTC(roomId, joined) {
           remoteId: data.sender,
           signalingState: pc.signalingState,
         })
-        ws.send(JSON.stringify({ ...answer, type: "answer", roomId: roomId.value, sender: clientId }))
+        // target: 상대방 ID를 지정하여 1:1 유니캐스트
+        ws.send(JSON.stringify({ ...answer, type: "answer", roomId: roomId.value, sender: clientId, target: data.sender }))
         logWebRTC("signal", "answer sent", { remoteId: data.sender, roomId: roomId.value })
       } else if (data.type === "answer") {
         if (pc.signalingState === "have-local-offer") {
@@ -265,11 +328,27 @@ export default function useWebRTC(roomId, joined) {
             remoteId: data.sender,
             signalingState: pc.signalingState,
           })
+
+          // 보류 중이던 ICE Candidate 적용
+          await processPendingCandidates(data.sender, pc)
         }
       } else if (data.type === "candidate" && data.candidate) {
         logWebRTC("ice", "remote ICE candidate received", summarizeCandidate(data.candidate))
-        await pc.addIceCandidate(new RTCIceCandidate(data.candidate))
-        logWebRTC("ice", "remote ICE candidate applied", { remoteId: data.sender })
+        if (pc.remoteDescription && pc.remoteDescription.type) {
+          try {
+            await pc.addIceCandidate(new RTCIceCandidate(data.candidate))
+            logWebRTC("ice", "remote ICE candidate applied", { remoteId: data.sender })
+          } catch (err) {
+            logWebRTC("ice", "error applying ICE candidate", { remoteId: data.sender, error: err.message })
+          }
+        } else {
+          // remoteDescription이 아직 설정되지 않은 경우 큐에 보관
+          if (!pendingCandidates.has(data.sender)) {
+            pendingCandidates.set(data.sender, [])
+          }
+          pendingCandidates.get(data.sender).push(data.candidate)
+          logWebRTC("ice", "remote ICE candidate queued", { remoteId: data.sender })
+        }
       }
     }
 
@@ -293,7 +372,10 @@ export default function useWebRTC(roomId, joined) {
   }
 
   function createPeer(remoteId) {
-    const pc = new RTCPeerConnection()
+    // STUN 서버 설정 추가
+    const pc = new RTCPeerConnection({
+      iceServers: defaultIceServers,
+    })
     peers.set(remoteId, pc)
     webrtc.peerCount = peers.size
     refreshPeerTracks(pc)
@@ -339,10 +421,7 @@ export default function useWebRTC(roomId, joined) {
       })
 
       if (["closed", "failed", "disconnected"].includes(pc.connectionState)) {
-        remoteMediaStreams.delete(remoteId)
-        refreshRemoteStreams()
-        peers.delete(remoteId)
-        webrtc.peerCount = peers.size
+        closePeer(remoteId)
       }
     }
 
@@ -374,11 +453,13 @@ export default function useWebRTC(roomId, joined) {
     pc.onicecandidate = (event) => {
       if (event.candidate) {
         logWebRTC("ice", "local ICE candidate generated", summarizeCandidate(event.candidate))
+        // target: remoteId 지정
         ws.send(JSON.stringify({
           type: "candidate",
           candidate: event.candidate,
           roomId: roomId.value,
           sender: clientId,
+          target: remoteId,
         }))
         logWebRTC("signal", "ICE candidate sent", { remoteId, roomId: roomId.value })
       } else {
@@ -390,6 +471,9 @@ export default function useWebRTC(roomId, joined) {
   }
 
   async function connectToPeer(remoteId) {
+    if (peers.has(remoteId)) {
+      closePeer(remoteId)
+    }
     const pc = createPeer(remoteId)
 
     const chatChannel = pc.createDataChannel("chat")
@@ -415,7 +499,8 @@ export default function useWebRTC(roomId, joined) {
       remoteId,
       signalingState: pc.signalingState,
     })
-    ws.send(JSON.stringify({ ...offer, type: "offer", roomId: roomId.value, sender: clientId }))
+    // target: remoteId 지정하여 해당 피어에게만 Offer 전달
+    ws.send(JSON.stringify({ ...offer, type: "offer", roomId: roomId.value, sender: clientId, target: remoteId }))
     logWebRTC("signal", "offer sent", { remoteId, roomId: roomId.value })
   }
 

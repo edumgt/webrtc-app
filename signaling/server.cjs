@@ -36,7 +36,7 @@ wss.on("connection", (ws) => {
     const msg = safeJsonParse(raw);
     if (!msg || typeof msg !== "object") return;
 
-    const { type, roomId, sender } = msg;
+    const { type, roomId, sender, target } = msg;
 
     if (type === "join-room") {
       if (!roomId || !sender) return;
@@ -64,13 +64,24 @@ wss.on("connection", (ws) => {
       return;
     }
 
-    // 같은 방의 다른 사용자에게 signaling 메시지 전달
+    // 타겟(target)이 지정된 경우 해당 대상에게만 1:1 유니캐스트 전달 (Glare & 다자간 충돌 방지)
     if (ws.roomId && rooms.has(ws.roomId)) {
-      rooms.get(ws.roomId).forEach((client) => {
-        if (client !== ws && client.readyState === WebSocket.OPEN) {
-          client.send(JSON.stringify(msg));
+      const roomClients = rooms.get(ws.roomId);
+      if (target) {
+        for (const client of roomClients) {
+          if (client.clientId === target && client.readyState === WebSocket.OPEN) {
+            client.send(JSON.stringify(msg));
+            break;
+          }
         }
-      });
+      } else {
+        // 타겟이 없는 경우 같은 방의 다른 사용자들에게 브로드캐스트
+        roomClients.forEach((client) => {
+          if (client !== ws && client.readyState === WebSocket.OPEN) {
+            client.send(JSON.stringify(msg));
+          }
+        });
+      }
     }
   });
 
@@ -81,7 +92,9 @@ wss.on("connection", (ws) => {
 
       rooms.get(roomId).delete(ws);
 
-      // (옵션) 나갔다고 알림
+      console.log(`👋 Client ${sender} left room ${roomId}`);
+
+      // 퇴장 알림 전파
       rooms.get(roomId).forEach((client) => {
         if (client.readyState === WebSocket.OPEN) {
           client.send(

@@ -1,225 +1,222 @@
 # Docker Advanced WebRTC Vue
 
-Vue 3 기반 협업형 WebRTC 애플리케이션입니다.  
-프런트엔드와 시그널링 서버가 각각 독립된 컨테이너로 동작하며, Docker Compose로 로컬에서 한 번에 실행할 수 있습니다.
+A collaborative WebRTC studio web application built with **Vue 3** and **Node.js**.  
+The frontend and signaling servers run as independent containerized microservices, fully orchestrated via Docker Compose for local development and ready for Amazon EKS / k3s Kubernetes deployments.
+
+[한국어 문서 (readme-kr.md)](./readme-kr.md)
 
 ---
 
-## 기술 스택
+## Technical Stack & Architecture
 
 ### Frontend
 
-| 분류 | 기술 | 버전 | 역할 |
-|------|------|------|------|
-| UI Framework | **Vue 3** | ^3.5 | Composition API 기반 컴포넌트 트리 |
-| Build Tool | **Vite** | ^7.1 | ESM 번들링, HMR, 환경변수 주입 |
-| Styling | **Tailwind CSS** | ^3.4 | 유틸리티 클래스 + 커스텀 CSS 변수 |
-| CSS Post-processing | **PostCSS** + autoprefixer | - | Tailwind 트랜스파일 및 벤더 접두사 |
-| Chart Library | **ApexCharts** (vue3-apexcharts) | ^5.3 | 운영 대시보드: 도넛·타임시리즈·레이더 차트 |
-| Runtime Server | **Node.js HTTP** (frontend-server.cjs) | 20.x | `dist/` 정적 파일 서빙 + `/env-config.js` 런타임 주입 |
+| Category | Technology | Version | Description & Role |
+|----------|------------|---------|---------------------|
+| UI Framework | **Vue 3** | ^3.5 | Reactive component tree based on Composition API (`<script setup>`) |
+| Build Tool | **Vite** | ^7.1 | Fast ESM bundling, HMR, and build-time env handling |
+| Styling | **Tailwind CSS** | ^3.4 | Utility-first CSS styling and custom theme variables |
+| Post-processing | **PostCSS** + autoprefixer | - | Vendor prefixing and CSS transformation |
+| Charts & Metrics | **ApexCharts** (vue3-apexcharts) | ^5.3 | Operations dashboard: Donut, Timeseries, and Radar score charts |
+| Runtime Web Server | **Node.js HTTP** (`frontend-server.cjs`) | 20.x | Static file server with runtime dynamic `env-config.js` injection |
 
-**핵심 설계 포인트**
-
-- `VITE_SIGNAL_URL`은 빌드 타임이 아닌 **런타임**에 주입됩니다.  
-  `frontend-server.cjs`가 컨테이너 시작 시 `window.__APP_CONFIG__`를 `env-config.js`로 브라우저에 전달하므로, 이미지를 재빌드하지 않고 환경변수만 바꿔 signaling 주소를 변경할 수 있습니다.
-- `src/utils/signalUrl.js`는 수동 입력 → 런타임 env → 빌드타임 env → `window.location.hostname:PORT` 순서로 WebSocket URL을 결정합니다.
-
-### Signaling Server
-
-| 분류 | 기술 | 버전 | 역할 |
-|------|------|------|------|
-| Runtime | **Node.js** | 20.x (Alpine) | CommonJS 기반 단일 파일 서버 |
-| WebSocket | **ws** | ^8.19 | RFC 6455 WebSocket 서버 구현 |
-| Protocol | HTTP + WebSocket 동일 포트 | - | `/health` 헬스체크 + WebSocket upgrade 처리 |
-
-**시그널링 흐름**
-
-1. 클라이언트가 `join-room` 메시지 전송 → 서버가 같은 방의 다른 피어에게 `new-peer` 전파
-2. 이후 SDP offer/answer, ICE candidate를 방 전체에 relay (브로드캐스트)
-3. 피어 퇴장 시 `peer-left` 전파 후 방이 비면 자동 삭제
-
-### WebRTC (브라우저 네이티브)
-
-| API | 용도 |
-|-----|------|
-| `RTCPeerConnection` | P2P 미디어·데이터 채널 연결 |
-| `RTCDataChannel` | 텍스트 채팅, 파일 전송, 화이트보드 드로잉 동기화 |
-| `getUserMedia` | 카메라 스트림 캡처 |
-| `getDisplayMedia` | 화면 공유 캡처 |
-| `MediaStream` | 원격 스트림 렌더링 |
-
-### DevOps / Infra
-
-| 분류 | 기술 | 역할 |
-|------|------|------|
-| 컨테이너 | **Docker** + Docker Compose | 멀티 서비스 로컬 실행 |
-| 베이스 이미지 | `node:20-alpine` | 경량 프로덕션 이미지 |
-| 멀티스테이지 빌드 | Dockerfile.frontend | 빌드 의존성을 최종 이미지에서 제거 |
-| CI/CD | **GitHub Actions** | GHCR push + EKS rollout |
-| 컨테이너 레지스트리 | **GitHub Container Registry (GHCR)** | `ghcr.io/edumgt/webrtc-frontend:latest`, `ghcr.io/edumgt/webrtc-signaling:latest` |
-| 오케스트레이션 | **Amazon EKS** (Kubernetes) | namespace `webrtc` 안에 frontend/signaling deployment |
-| 모니터링 | **CloudWatch Logs** | System 메뉴 차트 데이터 소스 (API 폴백: 브라우저 수집 로그) |
-
-### 테스트
-
-| 도구 | 용도 |
-|------|------|
-| **Playwright** (@playwright/test ^1.52) | E2E 화면 캡처, README 스크린샷 자동 생성 |
+#### Runtime Configuration Injection
+- `VITE_SIGNAL_URL` is injected at **container runtime**, not hardcoded at build time.  
+  When the container starts, `frontend-server.cjs` exposes `window.__APP_CONFIG__` via `/env-config.js`. This allows changing the signaling endpoint across different environments (local, staging, prod) without rebuilding the Docker image.
+- `src/utils/signalUrl.js` resolves the WebSocket URL in the following precedence:
+  1. Manual user override
+  2. Runtime environment (`window.__APP_CONFIG__.VITE_SIGNAL_URL`)
+  3. Build-time environment (`import.meta.env.VITE_SIGNAL_URL`)
+  4. Auto-fallback: `${protocol}://${window.location.hostname}:${port}`
 
 ---
 
-## 프로젝트 구조
+### Signaling Server
+
+| Category | Technology | Version | Description & Role |
+|----------|------------|---------|---------------------|
+| Runtime | **Node.js** | 20.x (Alpine) | Lightweight CommonJS server (`server.cjs`) |
+| WebSocket Library | **ws** | ^8.19 | RFC 6455 compliant WebSocket implementation |
+| Protocol / Routing | HTTP + WebSocket (Unified Port) | - | Native `/health` probe endpoint + WebSocket upgrade handler |
+
+#### Signaling Flow & P2P Mesh Topology
+1. **Room Join**: Client sends `{ type: "join-room", roomId, sender }`. The server registers the socket with its `clientId` and notifies existing peers with `{ type: "new-peer", roomId, sender }`.
+2. **1:1 Targeted Unicast Signaling**:
+   - To prevent SDP Glare and state collisions in multi-user mesh networks, all subsequent signaling messages (`offer`, `answer`, `candidate`) must include `target: remoteId`.
+   - The signaling server inspects `msg.target` and routes messages directly to the designated peer rather than blind broadcasting.
+3. **Graceful Disconnection**: When a socket disconnects, the server broadcasts `{ type: "peer-left", roomId, sender }` to the room so remote peers can cleanly release connections and media tracks.
+
+---
+
+### WebRTC (Browser Native)
+
+| Feature / API | Role & Implementation Details |
+|---------------|-------------------------------|
+| `RTCPeerConnection` | P2P audio, video, and data channel transport |
+| **STUN Integration** | Configured with Google public STUN servers (`stun:stun.l.google.com:19302`, `stun1`, `stun2`) for reliable NAT/firewall traversal |
+| **Candidate Queuing** | Buffers incoming remote ICE candidates until `setRemoteDescription` succeeds, preventing `InvalidStateError` race conditions |
+| `RTCDataChannel` | Dedicated channels: `chat` (text), `file` (peer-to-peer file transfer), and `draw` (canvas sync) |
+| `getUserMedia` | Local webcam and microphone capture |
+| `getDisplayMedia` | Full PC desktop / application window screen sharing |
+| `MediaStream` | Dynamic local/remote track binding and rendering |
+
+---
+
+### DevOps & Infrastructure
+
+| Category | Technology | Description |
+|----------|------------|-------------|
+| Containerization | **Docker** + Docker Compose | Local multi-service orchestration |
+| Base Image | `node:20-alpine` | Minimal production footprint |
+| Multi-stage Build | `Dockerfile.frontend` | Strips dev tools/dependencies; serves only minified assets |
+| Container Registry | **GitHub Container Registry (GHCR)** | `ghcr.io/edumgt/webrtc-frontend`, `ghcr.io/edumgt/webrtc-signaling` |
+| Orchestration | **Kubernetes** (Amazon EKS / k3s) | Deployed in `webrtc` namespace with Deployments and Services |
+| Automation Script | Shell (`provision-ec2-k8s-deploy.sh`) | Automated AWS EC2 + k3s cluster setup and pod deployment |
+| CI/CD | **GitHub Actions** | Automated build, container push, and rollout |
+
+---
+
+## Project Structure
 
 ```
 webrtc-app/
-├── signaling/                   # 시그널링 서버
-│   ├── server.cjs               # HTTP + WebSocket (프로덕션)
-│   ├── signal.js                # 심플 WebSocket only (개발용)
-│   └── package.json             # 의존성: ws
+├── signaling/                   # Signaling server microservice
+│   ├── server.cjs               # Production HTTP health + WebSocket signaling
+│   ├── signal.js                # Minimal WebSocket broadcast script
+│   └── package.json             # Dependencies: ws
 │
-├── frontend/                    # Vue 3 앱 + 정적 서버
+├── frontend/                    # Vue 3 SPA + runtime file server
 │   ├── src/
-│   │   ├── App.vue              # 루트 컴포넌트 (좌우 offcanvas 레이아웃)
+│   │   ├── App.vue              # Main application shell with dual offcanvas layout
 │   │   ├── composables/
-│   │   │   └── useWebRTC.js     # WebRTC 상태·이벤트 통합 composable
+│   │   │   └── useWebRTC.js     # WebRTC state, targeted signaling, and event management
 │   │   ├── components/
-│   │   │   ├── Whiteboard.vue   # 공유 드로잉 캔버스
-│   │   │   ├── ChatBox.vue      # 실시간 채팅
-│   │   │   ├── FileBox.vue      # 파일 전송
-│   │   │   ├── MediaPanel.vue   # 카메라·화면 공유
-│   │   │   ├── Video.vue        # 단일 비디오 스트림
-│   │   │   └── SystemPanel.vue  # 운영 대시보드
+│   │   │   ├── Whiteboard.vue   # Real-time collaborative canvas
+│   │   │   ├── ChatBox.vue      # P2P text chat
+│   │   │   ├── FileBox.vue      # P2P file transfer
+│   │   │   ├── MediaPanel.vue   # Camera and screen share grid
+│   │   │   ├── SystemPanel.vue  # CloudWatch metrics & system dashboard
+│   │   │   └── Video.vue        # Legacy standalone video component
 │   │   └── utils/
-│   │       └── signalUrl.js     # WebSocket URL 결정 로직
+│   │       └── signalUrl.js     # WebSocket URL resolution helper
 │   ├── index.html
 │   ├── vite.config.js
 │   ├── tailwind.config.js
 │   ├── postcss.config.js
-│   ├── frontend-server.cjs      # 정적 파일 서버 (런타임 env 주입)
-│   └── package.json             # 의존성: Vue, Vite, Tailwind, ApexCharts
+│   ├── frontend-server.cjs      # Node runtime server (dynamic /env-config.js)
+│   └── package.json
 │
-├── Dockerfile.signaling         # node:20-alpine 단일 스테이지
-├── Dockerfile.frontend          # node:20-alpine 멀티스테이지 (빌드 + 서빙)
-├── docker-compose.yml           # 로컬 실행 (포트 8480/8481)
-├── .env                         # 환경변수 (로컬 기본값)
-├── .env.example                 # 환경변수 가이드
-├── .dockerignore
-├── nginx.conf                   # 레거시 참고용 (현재 미사용)
-├── kube-manifests/              # EKS 배포 매니페스트
-└── .github/workflows/           # GitHub Actions CI/CD
+├── Dockerfile.signaling         # Alpine single-stage image
+├── Dockerfile.frontend          # Alpine multi-stage build (build + serve)
+├── docker-compose.yml           # Local multi-container setup (ports 8480 / 8481)
+├── .env                         # Local environment variables
+├── .env.example                 # Environment template
+├── scripts/
+│   └── provision-ec2-k8s-deploy.sh  # EC2 + k3s automated deployment script
+├── kube-manifests/              # Kubernetes manifests
+└── .github/workflows/           # CI/CD workflows
 ```
 
 ---
 
-## 로컬 Docker 실행
+## Getting Started (Docker Compose)
+
+### 1. Run with Docker Compose
 
 ```bash
-# 이미지 빌드 후 컨테이너 시작
+# Build images and start containers
 docker compose up --build
 
-# 백그라운드 실행
+# Or run in detached mode
 docker compose up --build -d
 ```
 
-| 서비스 | URL |
-|--------|-----|
-| 프런트엔드 | http://localhost:8480 |
-| 시그널링 | ws://localhost:8481 |
+| Service | Address |
+|---------|---------|
+| Frontend | [http://localhost:8480](http://localhost:8480) |
+| Signaling Server | `ws://localhost:8481` |
 
-> 포트 8480 / 8481은 일반적으로 사용하는 80, 3001, 8080과 겹치지 않아 로컬 충돌을 방지합니다.
+> Ports `8480` and `8481` are selected to avoid collisions with default development ports (80, 3000, 8080).
 
----
+### 2. Environment Configuration
 
-## 환경변수
-
-`.env` 파일로 설정합니다.
+Create or modify `.env` in the root directory:
 
 ```env
-# 브라우저가 접속하는 시그널링 호스트 포트 (docker-compose 매핑 포트와 일치)
+# Signaling server host port accessed by client browsers
 VITE_SIGNAL_URL=
 VITE_SIGNAL_PORT=8481
 
-# 프런트엔드 컨테이너 내부 포트
+# Frontend container internal port
 FRONTEND_HOST=0.0.0.0
 FRONTEND_PORT=80
 
-# 시그널링 컨테이너 내부 포트
+# Signaling container internal port
 SIGNAL_HOST=0.0.0.0
 SIGNAL_PORT=3001
 ```
 
-AWS 배포 시 `VITE_SIGNAL_URL`에 ELB 주소를 설정합니다:
-
+For AWS / Production deployments, specify the load balancer address:
 ```env
-VITE_SIGNAL_URL=wss://your-load-balancer.ap-northeast-2.elb.amazonaws.com
+VITE_SIGNAL_URL=wss://your-load-balancer-url.amazonaws.com
 ```
 
 ---
 
-## AWS EC2 + Kubernetes 자동 배포 스크립트
+## Local Development (Without Docker)
 
-`/scripts/provision-ec2-k8s-deploy.sh`는 아래 과정을 한 번에 수행합니다.
-
-1. ECR 리포지토리 생성 확인
-2. frontend/signaling Docker 이미지 빌드 및 ECR 푸시
-3. EC2 인스턴스 생성
-4. EC2에 k3s(Kubernetes) 설치
-5. webrtc namespace, deployment, service 생성 및 pod rollout 확인
-
-필수 환경변수:
-
+### 1. Signaling Server
 ```bash
-export AWS_REGION=ap-northeast-2
-export EC2_AMI_ID=ami-xxxxxxxxxxxxxxxxx
-export EC2_KEY_NAME=my-keypair
-export EC2_SECURITY_GROUP_ID=sg-xxxxxxxxxxxxxxxxx
-export EC2_SUBNET_ID=subnet-xxxxxxxxxxxxxxxxx
-export SSH_PRIVATE_KEY_PATH=/absolute/path/to/my-keypair.pem
-```
-
-선택 환경변수:
-
-```bash
-export AWS_PROFILE=default
-export EC2_INSTANCE_TYPE=t3.large
-export EC2_IAM_INSTANCE_PROFILE_NAME=ec2-ecr-role
-export IMAGE_TAG=latest
-```
-
-실행:
-
-```bash
-chmod +x ./scripts/provision-ec2-k8s-deploy.sh
-./scripts/provision-ec2-k8s-deploy.sh
-```
-
-> 보안 그룹에 최소 `22`, `30080`, `30081` 인바운드 허용이 필요합니다.
-
----
-
-## 로컬 개발 (Docker 없이)
-
-```bash
-cd frontend
-npm install
-npm run dev          # Vite dev server (포트 5173)
-
-# 별도 터미널
 cd signaling
 npm install
-npm start            # 시그널링 서버 (포트 3001)
+npm start            # Runs server.cjs on port 3001 (with /health and room routing)
 ```
 
-WSL에서 외부 접속 허용:
-
+### 2. Frontend
 ```bash
 cd frontend
+npm install
+npm run dev          # Vite development server (port 5173)
+
+# For WSL2 external access:
 npm run dev:wsl
 ```
 
 ---
 
-## CI/CD 빌드 · 배포 흐름
+## Signaling & P2P Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant A as Peer A (Initiator)
+    participant SIG as Signaling Server
+    participant B as Peer B (Receiver)
+
+    Note over A,B: 1. Join Room
+    A->>SIG: { type: "join-room", roomId: "room1", sender: "idA" }
+    B->>SIG: { type: "join-room", roomId: "room1", sender: "idB" }
+    SIG-->>A: { type: "new-peer", roomId: "room1", sender: "idB" }
+
+    Note over A,B: 2. 1:1 Targeted Offer / Answer
+    A->>SIG: { type: "offer", sender: "idA", target: "idB", sdp: ... }
+    SIG->>B: { type: "offer", sender: "idA", target: "idB", sdp: ... }
+    B->>SIG: { type: "answer", sender: "idB", target: "idA", sdp: ... }
+    SIG->>A: { type: "answer", sender: "idB", target: "idA", sdp: ... }
+
+    Note over A,B: 3. ICE Candidate Exchange (with Queueing)
+    A->>SIG: { type: "candidate", sender: "idA", target: "idB", candidate: ... }
+    SIG->>B: { type: "candidate", sender: "idA", target: "idB", candidate: ... }
+    B->>SIG: { type: "candidate", sender: "idB", target: "idA", candidate: ... }
+    SIG->>A: { type: "candidate", sender: "idB", target: "idA", candidate: ... }
+
+    Note over A,B: 4. Direct P2P Connected
+    A<<-->>B: RTCDataChannel (chat, file, draw) & MediaStream (camera, screen)
+```
+
+---
+
+## CI/CD Workflow (GitHub Actions & EKS)
 
 ```mermaid
 flowchart TD
@@ -227,7 +224,7 @@ flowchart TD
 
     MAIN --> GHA[GitHub Actions\nghcr-publish.yml]
 
-    subgraph BUILD["build-and-push (matrix, parallel)"]
+    subgraph BUILD["build-and-push (parallel)"]
         direction TB
         B1["Dockerfile.frontend\n→ webrtc-frontend"]
         B2["Dockerfile.signaling\n→ webrtc-signaling"]
@@ -239,104 +236,77 @@ flowchart TD
 
     GHCR --> DEPLOY
 
-    subgraph DEPLOY["deploy-to-eks (needs: build-and-push)"]
+    subgraph DEPLOY["deploy-to-eks"]
         direction TB
-        D1[AWS Credentials 설정]
-        D2[kubeconfig 업데이트]
-        D3[kubectl apply\nk8s manifests]
-        D4[env inject\nVITE_SIGNAL_URL / PORT]
-        D5[rollout restart\nwebrtc-signaling\nwebrtc-frontend]
-        D6[rollout status 대기\ntimeout: 180s]
+        D1[Configure AWS Credentials]
+        D2[Update kubeconfig]
+        D3[Apply Kubernetes Manifests]
+        D4[Inject Environment Variables]
+        D5[Rollout Restart Deployments]
+        D6[Wait for Rollout Status]
         D1 --> D2 --> D3 --> D4 --> D5 --> D6
     end
 
-    subgraph EKS["AWS EKS — webrtc namespace"]
+    subgraph EKS["Kubernetes Cluster (webrtc namespace)"]
         NS[01-namespace]
-        SIG[02-webrtc-signaling\nDeployment]
-        SVC[03-LoadBalancer\nService]
-        FE[04-webrtc-frontend\nDeployment]
+        SIG[webrtc-signaling Deployment + Service]
+        FE[webrtc-frontend Deployment + Service]
     end
 
-    D3 -->|kubectl apply| NS & SIG & SVC & FE
+    D3 -->|kubectl apply| NS & SIG & FE
     D5 -->|rollout restart| SIG & FE
     GHCR -->|image pull| SIG & FE
 ```
 
-## Sequence Diagram
+---
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant U as User Browser
-    participant FE as Frontend Pod
-    participant SIG as Signaling Pod
-    participant CW as CloudWatch/API
+## AWS EC2 + k3s Automated Deployment
 
-    U->>FE: Open frontend ELB
-    FE-->>U: index.html + env-config.js + Vue bundle
-    U->>U: Enter signal server + room id
-    U->>SIG: WebSocket connect (join-room)
-    SIG-->>U: new-peer / offer / answer / candidate
-    U->>U: RTCPeerConnection, SDP, ICE, datachannel
-    U->>FE: Select Drawing / Chat / Files / Video / Screen
-    FE-->>U: Render collaborative workspace
-    U->>FE: Open System menu
-    FE->>CW: GET /api/log-timeseries, /api/log-recent
-    CW-->>FE: CloudWatch-friendly JSON
-    FE-->>U: ApexCharts donut / timeseries / radar + recent logs
+The script [`scripts/provision-ec2-k8s-deploy.sh`](./scripts/provision-ec2-k8s-deploy.sh) automates end-to-end cloud infrastructure setup:
+
+1. Creates or verifies Amazon ECR repositories (`webrtc-frontend`, `webrtc-signaling`).
+2. Builds and pushes multi-architecture Docker images to ECR.
+3. Launches an EC2 instance with specified subnet, key pair, and security groups.
+4. Automatically installs **k3s** (lightweight Kubernetes) on the EC2 host via SSH.
+5. Generates ECR pull secrets and deploys NodePort services (`30080` for frontend, `30081` for signaling).
+
+Required environment variables:
+```bash
+export AWS_REGION=ap-northeast-2
+export EC2_AMI_ID=ami-xxxxxxxxxxxxxxxxx
+export EC2_KEY_NAME=my-keypair
+export EC2_SECURITY_GROUP_ID=sg-xxxxxxxxxxxxxxxxx
+export EC2_SUBNET_ID=subnet-xxxxxxxxxxxxxxxxx
+export SSH_PRIVATE_KEY_PATH=/path/to/keypair.pem
+```
+
+Execution:
+```bash
+chmod +x ./scripts/provision-ec2-k8s-deploy.sh
+./scripts/provision-ec2-k8s-deploy.sh
 ```
 
 ---
 
-## CloudWatch 차트 연동
+## Key Files Reference
 
-System 메뉴는 아래 API 포맷을 기대합니다. API가 없을 경우 브라우저 수집 로그로 폴백합니다.
-
-- `GET /api/log-timeseries?rangeMinutes=60&binMinutes=5`
-- `GET /api/log-recent?limit=20`
-
-```json
-{
-  "rangeMinutes": 60,
-  "binMinutes": 5,
-  "series": [
-    {
-      "name": "frontend_errors",
-      "data": [["2026-04-10T10:00:00Z", 3], ["2026-04-10T10:05:00Z", 1]]
-    }
-  ],
-  "recentLogs": [
-    {
-      "timestamp": "2026-04-10T10:12:10Z",
-      "service": "signaling",
-      "level": "error",
-      "event": "websocket_connect_failed",
-      "message": "timeout"
-    }
-  ]
-}
-```
+| File | Purpose |
+|------|---------|
+| [`frontend/src/App.vue`](./frontend/src/App.vue) | Main shell layout and offcanvas navigation |
+| [`frontend/src/composables/useWebRTC.js`](./frontend/src/composables/useWebRTC.js) | WebRTC state, STUN configuration, and 1:1 signaling logic |
+| [`frontend/src/components/Whiteboard.vue`](./frontend/src/components/Whiteboard.vue) | Shared canvas drawing component |
+| [`frontend/src/components/MediaPanel.vue`](./frontend/src/components/MediaPanel.vue) | Video grid for webcam and screen share streams |
+| [`frontend/src/components/ChatBox.vue`](./frontend/src/components/ChatBox.vue) | P2P text messaging component |
+| [`frontend/src/components/FileBox.vue`](./frontend/src/components/FileBox.vue) | P2P file drop and transfer interface |
+| [`frontend/src/components/SystemPanel.vue`](./frontend/src/components/SystemPanel.vue) | Operational dashboard with ApexCharts metrics |
+| [`frontend/frontend-server.cjs`](./frontend/frontend-server.cjs) | Static file server with dynamic runtime env injection |
+| [`signaling/server.cjs`](./signaling/server.cjs) | WebSocket signaling server with targeted unicast routing |
+| [`Dockerfile.frontend`](./Dockerfile.frontend) | Multi-stage build for frontend production image |
+| [`Dockerfile.signaling`](./Dockerfile.signaling) | Lightweight Alpine signaling image |
+| [`docker-compose.yml`](./docker-compose.yml) | Local multi-service orchestrator |
 
 ---
 
-## Key Files
+## License & Ownership
 
-| 파일 | 설명 |
-|------|------|
-| [`frontend/src/App.vue`](./frontend/src/App.vue) | 루트 컴포넌트, 좌우 offcanvas 레이아웃 |
-| [`frontend/src/composables/useWebRTC.js`](./frontend/src/composables/useWebRTC.js) | WebRTC 전체 상태 관리 |
-| [`frontend/src/components/Whiteboard.vue`](./frontend/src/components/Whiteboard.vue) | 공유 드로잉 |
-| [`frontend/src/components/SystemPanel.vue`](./frontend/src/components/SystemPanel.vue) | 운영 대시보드 |
-| [`frontend/frontend-server.cjs`](./frontend/frontend-server.cjs) | 런타임 env 주입 정적 서버 |
-| [`signaling/server.cjs`](./signaling/server.cjs) | WebSocket 시그널링 서버 |
-| [`Dockerfile.frontend`](./Dockerfile.frontend) | 멀티스테이지 프런트엔드 이미지 |
-| [`Dockerfile.signaling`](./Dockerfile.signaling) | 시그널링 이미지 |
-| [`docker-compose.yml`](./docker-compose.yml) | 로컬 실행 구성 |
-| [`kube-manifests/`](./kube-manifests/) | EKS 배포 매니페스트 |
-
-
----
-
-### ghcr 에 push
-
-![alt text](image.png)
+(주)에듀엠지티 · [www.edumgt.co.kr](https://www.edumgt.co.kr)
