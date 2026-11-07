@@ -3,7 +3,7 @@ id: HX-002
 title: P2P 파일 전송 청킹·진행률·메타데이터 프로토콜
 priority: P0
 area: frontend
-status: in-progress
+status: todo
 stages: [pm, design, dev, qa]
 acceptance:
   - 16KB 단위 청크로 전송하며 bufferedAmount 기반 백프레셔를 적용해 수 MB 파일도 전송된다
