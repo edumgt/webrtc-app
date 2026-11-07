@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# 저장소 어디서든 `scripts/hermes <command>`로 hermes CLI를 실행한다.
+set -euo pipefail
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+exec uv run --project "$REPO_DIR/hermes" --directory "$REPO_DIR/hermes" hermes "$@"
