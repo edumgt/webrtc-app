@@ -1,0 +1,26 @@
+[project]
+name = "hermes-org"
+version = "0.1.0"
+description = "Hermes 기반 가상 소프트웨어 조직(PM/Designer/Developer/QA)이 webrtc-app을 고도화하는 멀티 에이전트 파이프라인"
+readme = "README.md"
+requires-python = ">=3.10,<3.14"
+dependencies = [
+    "crewai>=1.0,<2",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+hermes = "hermes_org.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["hermes_org"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

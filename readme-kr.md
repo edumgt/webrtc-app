@@ -111,6 +111,8 @@ webrtc-app/
 ├── docker-compose.yml           # 로컬 멀티 컨테이너 실행 구성 (포트 8480 / 8481)
 ├── .env                         # 로컬 환경변수 설정 파일
 ├── .env.example                 # 환경변수 템플릿 예시
+├── hermes/                      # Hermes 가상 조직 (backlog, config, workspace)
+├── AGENTS.md                    # 에이전트 헌장
 ├── scripts/
 │   └── provision-ec2-k8s-deploy.sh  # EC2 + k3s 자동 배포 스크립트
 ├── kube-manifests/              # Kubernetes 매니페스트
@@ -304,6 +306,27 @@ chmod +x ./scripts/provision-ec2-k8s-deploy.sh
 | [`Dockerfile.frontend`](./Dockerfile.frontend) | 멀티스테이지 프런트엔드 프로덕션 이미지 |
 | [`Dockerfile.signaling`](./Dockerfile.signaling) | 경량 Alpine 시그널링 이미지 |
 | [`docker-compose.yml`](./docker-compose.yml) | 로컬 멀티 서비스 오케스트레이션 |
+
+---
+
+## Hermes 가상 조직 (AI 에이전트 고도화 파이프라인)
+
+이 저장소는 [todo.md](./todo.md)의 설계대로 **Hermes 모델 기반 가상 소프트웨어 조직(PM → 디자이너 → 개발자 ⇄ QA)**이
+`hermes/backlog/`의 티켓을 받아 코드를 고도화하도록 구성되어 있습니다.
+
+```bash
+ollama pull hermes3:8b
+cd hermes && cp .env.example .env && uv sync --extra dev
+uv run hermes check          # 엔드포인트·설정·백로그 점검
+uv run hermes backlog        # 티켓 목록
+uv run hermes run HX-002     # 티켓 실행 → hermes/HX-002 브랜치 + workspace 산출물
+uv run hermes daemon        # 자율 모드: 백로그 순회·브랜치 커밋·새 티켓 제안 (승인·머지는 사람)
+uv run hermes status        # 승인 대기 / 리뷰 대기 / 막힘 확인
+```
+
+- 조직 정의: [hermes/config/org.yaml](./hermes/config/org.yaml) · 운영 가이드: [hermes/README.md](./hermes/README.md) · 에이전트 헌장: [AGENTS.md](./AGENTS.md)
+- 테스트: `signaling` → `npm test` (node --test), `frontend` → `npm test` (vitest) · CI: `.github/workflows/ci.yml`
+- GitHub에서 실행: `Hermes ticket run` 워크플로(workflow_dispatch)에 티켓 ID 입력 → PR 자동 생성
 
 ---
 

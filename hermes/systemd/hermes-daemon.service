@@ -1,0 +1,19 @@
+[Unit]
+Description=Hermes virtual software org daemon (webrtc-app)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ubuntu/webrtc-app/hermes
+# Ollama가 Windows 호스트에서 돌면 host:port 지정 (WSL 기본 게이트웨이). hermes/.env의 HERMES_BASE_URL이 우선한다.
+Environment=OLLAMA_HOST=172.29.32.1:11434
+Environment=PATH=/root/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/root/.local/bin/uv run hermes daemon
+Restart=always
+RestartSec=30
+StandardOutput=append:/home/ubuntu/webrtc-app/hermes/workspace/daemon.log
+StandardError=append:/home/ubuntu/webrtc-app/hermes/workspace/daemon.log
+
+[Install]
+WantedBy=multi-user.target

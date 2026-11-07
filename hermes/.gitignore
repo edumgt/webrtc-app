@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+workspace/*/logs/
+.pytest_cache/
+workspace/daemon-state.json
+workspace/daemon.log
+workspace/discover/

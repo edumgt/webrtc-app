@@ -1,0 +1,71 @@
+name: Hermes ticket run
+
+# 수동 실행: 티켓 ID를 입력하면 Hermes 조직이 PM→Design→Dev⇄QA를 수행하고 PR을 연다.
+# 필요한 설정:
+#   secrets.HERMES_BASE_URL  (예: https://my-vllm.example.com/v1)
+#   secrets.HERMES_API_KEY
+#   vars.HERMES_MODEL        (예: NousResearch/Hermes-3-Llama-3.1-8B)
+#   vars.HERMES_LLM_PROVIDER (openai | ollama)
+on:
+  workflow_dispatch:
+    inputs:
+      ticket:
+        description: "티켓 ID (예: HX-002)"
+        required: true
+      stages:
+        description: "실행 단계 (비우면 티켓 설정, 예: dev,qa)"
+        required: false
+        default: ""
+      max_iter:
+        description: "QA FAIL 시 Dev 재작업 최대 횟수"
+        required: false
+        default: "2"
+
+jobs:
+  run-ticket:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      HERMES_LLM_PROVIDER: ${{ vars.HERMES_LLM_PROVIDER || 'openai' }}
+      HERMES_MODEL: ${{ vars.HERMES_MODEL }}
+      HERMES_BASE_URL: ${{ secrets.HERMES_BASE_URL }}
+      HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
+      HERMES_MAX_ITERATIONS: ${{ inputs.max_iter }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci --prefix signaling
+      - run: npm ci --prefix frontend
+      - uses: astral-sh/setup-uv@v5
+      - run: uv python install 3.12
+      - run: uv sync
+        working-directory: hermes
+      - name: Check endpoint
+        run: uv run hermes check
+        working-directory: hermes
+      - name: Run pipeline
+        id: run
+        working-directory: hermes
+        run: |
+          ARGS="${{ inputs.ticket }} --no-branch"
+          if [ -n "${{ inputs.stages }}" ]; then ARGS="$ARGS --stages ${{ inputs.stages }}"; fi
+          set +e
+          uv run hermes run $ARGS
+          echo "exit=$?" >> "$GITHUB_OUTPUT"
+      - name: Open pull request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: hermes/${{ inputs.ticket }}
+          title: "hermes(${{ inputs.ticket }}): automated implementation"
+          commit-message: "hermes(${{ inputs.ticket }}): automated implementation"
+          body: |
+            Hermes 조직이 티켓 `${{ inputs.ticket }}`을 처리했습니다. (pipeline exit=${{ steps.run.outputs.exit }}, 0=QA PASS, 2=QA FAIL)
+
+            산출물: `hermes/workspace/${{ inputs.ticket }}/` (prd.md, design.md, dev-report.md, qa-report.md, summary.md)
+
+            사람이 QA 보고서와 diff를 검토한 뒤 머지하세요.
+          labels: hermes

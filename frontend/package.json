@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "start": "node frontend-server.cjs",
-    "dev:wsl": "vite --host 0.0.0.0 --port 5173"
+    "dev:wsl": "vite --host 0.0.0.0 --port 5173",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "apexcharts": "^5.3.5",
@@ -20,6 +22,7 @@
     "autoprefixer": "^10.4.24",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.19",
-    "vite": "^7.1.2"
+    "vite": "^7.1.2",
+    "vitest": "^3.2.4"
   }
 }

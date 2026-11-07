@@ -1,0 +1,87 @@
+# Hermes 가상 소프트웨어 조직 정의
+# - roles: 각 에이전트의 역할/목표/배경/도구
+# - stages: 파이프라인 단계와 담당 역할, 산출물 파일명
+# - review_loop: QA FAIL 시 Developer 재작업 규칙
+# - roles.<role>.model: (선택) 역할별 모델 오버라이드. 없으면 HERMES_MODEL 사용
+project:
+  name: webrtc-app
+  description: >
+    Vue 3 + Node.js(ws) 기반 협업형 WebRTC 스튜디오. 프런트엔드(frontend/)와
+    시그널링 서버(signaling/)가 독립 컨테이너로 동작하며 Docker Compose / k3s / EKS로 배포된다.
+  conventions:
+    - 코드 변경은 반드시 저장소 안의 기존 스타일(ESM frontend, CJS signaling, 2-space indent, 세미콜론 없음)을 따른다.
+    - 의존성 추가는 최소화하고, 추가 시 package.json과 lock 파일을 함께 갱신한다.
+    - 새 동작에는 테스트를 추가한다. frontend는 vitest, signaling은 node --test.
+    - 사용자에게 보이는 문구는 한국어, 코드 식별자/주석은 영어 또는 한국어 혼용 가능.
+    - .env, .git, node_modules는 절대 수정하지 않는다.
+
+roles:
+  pm:
+    role: Product Manager
+    goal: 티켓과 저장소 현황을 분석해 명확하고 검증 가능한 PRD와 작업 분해(WBS)를 작성한다.
+    backstory: >
+      애자일 환경에서 실시간 통신 제품을 여러 번 출시한 시니어 PM. 기술적 실현 가능성과
+      사용자 가치를 조율하며, 수용 기준(acceptance criteria)을 테스트 가능한 문장으로 쓴다.
+    tools: [read_file, list_dir, search_text]
+  designer:
+    role: UI/UX Designer
+    goal: PRD를 바탕으로 화면 흐름, 컴포넌트 스펙, 상태별 UI 규칙, 접근성 요구사항을 정의한다.
+    backstory: >
+      Vue + Tailwind 기반 디자인 시스템에 능숙한 프로덕트 디자이너. 기존 컴포넌트의
+      시각 언어(다크 테마, CSS 변수 --surface-2/--border/--text-primary)를 유지하면서 변경을 설계한다.
+    tools: [read_file, list_dir, search_text]
+  developer:
+    role: Senior Full-Stack Developer
+    goal: PRD와 디자인 스펙에 맞춰 저장소에 실제 코드를 작성/수정하고, 테스트를 추가하며, 빌드와 테스트를 통과시킨다.
+    backstory: >
+      WebRTC(RTCPeerConnection, DataChannel, ICE)와 Node.js WebSocket 서버에 정통한 10년 차 엔지니어.
+      작은 단위로 변경하고, 변경마다 테스트를 실행해 확인한다. 파일을 수정하기 전에 반드시 read_file로 현재 내용을 읽는다.
+    tools: [read_file, write_file, list_dir, search_text, run_command, git_status, git_diff]
+  qa:
+    role: QA Automation Engineer
+    goal: 구현이 수용 기준을 만족하는지 테스트 실행과 코드 리뷰로 검증하고, 결함을 재현 가능한 형태로 보고한다.
+    backstory: >
+      TDD와 엄격한 품질 기준을 가진 테스트 엔지니어. 직접 테스트/빌드를 실행하고 diff를 읽으며,
+      보고서 마지막 줄에 반드시 'VERDICT: PASS' 또는 'VERDICT: FAIL'을 명시한다.
+    tools: [read_file, list_dir, search_text, run_command, git_status, git_diff]
+
+  techlead:
+    role: Tech Lead
+    goal: 저장소를 분석해 다음에 처리할 가치가 높은 개선 티켓을 작은 단위로 제안한다. 제안은 사람이 승인한다.
+    backstory: >
+      WebRTC 제품의 코드베이스를 정기적으로 점검하는 테크 리드. 추측보다 코드 근거를 중시하고,
+      하루 안에 끝낼 수 있는 범위로 작업을 쪼개며, 이미 있는 티켓과 중복되는 제안은 하지 않는다.
+    tools: [read_file, list_dir, search_text, git_status]
+    model: qwen2.5-coder:7b   # 코드 탐색·근거 인용이 필요해 코더 모델 사용 (ollama pull qwen2.5-coder:7b)
+
+stages:
+  pm:
+    role: pm
+    output: prd.md
+  design:
+    role: designer
+    output: design.md
+  dev:
+    role: developer
+    output: dev-report.md
+  qa:
+    role: qa
+    output: qa-report.md
+
+review_loop:
+  # QA 보고서 마지막에 이 토큰이 있으면 통과
+  pass_token: "VERDICT: PASS"
+  fail_token: "VERDICT: FAIL"
+  # 이전 단계 산출물을 다음 단계 프롬프트에 포함할 때 최대 글자 수(컨텍스트 절약)
+  artifact_excerpt_chars: 6000
+
+discover:
+  # Tech Lead 발굴 설정 (hermes discover / daemon)
+  role: techlead
+  max_proposals: 3        # 한 번 실행에 제안할 최대 티켓 수
+  max_open_proposed: 5    # 승인 대기(proposed) 티켓이 이 수 이상이면 발굴을 쉰다
+
+daemon:
+  base_branch: main       # 티켓 브랜치를 만들 기준 브랜치
+  poll_seconds: 600       # 할 일이 없을 때 대기 시간
+  endpoint_retry_seconds: 60

@@ -111,6 +111,8 @@ webrtc-app/
 ├── docker-compose.yml           # Local multi-container setup (ports 8480 / 8481)
 ├── .env                         # Local environment variables
 ├── .env.example                 # Environment template
+├── hermes/                      # Hermes virtual organization (backlog, config, workspace)
+├── AGENTS.md                    # Agent charter
 ├── scripts/
 │   └── provision-ec2-k8s-deploy.sh  # EC2 + k3s automated deployment script
 ├── kube-manifests/              # Kubernetes manifests
@@ -304,6 +306,28 @@ chmod +x ./scripts/provision-ec2-k8s-deploy.sh
 | [`Dockerfile.frontend`](./Dockerfile.frontend) | Multi-stage build for frontend production image |
 | [`Dockerfile.signaling`](./Dockerfile.signaling) | Lightweight Alpine signaling image |
 | [`docker-compose.yml`](./docker-compose.yml) | Local multi-service orchestrator |
+
+---
+
+## Hermes Virtual Organization (AI agent improvement pipeline)
+
+Following the design in [todo.md](./todo.md), this repository is set up so that a
+**Hermes-model-based virtual software company (PM → Designer → Developer ⇄ QA)** picks up tickets
+from `hermes/backlog/` and improves the codebase.
+
+```bash
+ollama pull hermes3:8b
+cd hermes && cp .env.example .env && uv sync --extra dev
+uv run hermes check          # verify endpoint, config and backlog
+uv run hermes backlog        # list tickets
+uv run hermes run HX-002     # run a ticket → branch hermes/HX-002 + workspace artifacts
+uv run hermes daemon        # autonomous mode: works through the backlog, commits to branches, proposes tickets (humans approve/merge)
+uv run hermes status        # what needs a human: proposals / review / blocked
+```
+
+- Org definition: [hermes/config/org.yaml](./hermes/config/org.yaml) · Guide: [hermes/README.md](./hermes/README.md) · Agent charter: [AGENTS.md](./AGENTS.md)
+- Tests: `signaling` → `npm test` (node --test), `frontend` → `npm test` (vitest) · CI: `.github/workflows/ci.yml`
+- Run on GitHub: trigger the `Hermes ticket run` workflow (workflow_dispatch) with a ticket ID → a PR is opened
 
 ---
 
