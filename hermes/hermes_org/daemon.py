@@ -10,13 +10,14 @@ import json
 import re
 import time
 import traceback
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
 from .agents import load_org
 from .backlog import BACKLOG_DIR, Ticket, load_tickets
 from .llm import check_endpoint
+from .merge import MergeConfig, auto_merge
 from .pipeline import Pipeline
 from .settings import WORKSPACE_DIR, Settings
 from .tools import git
@@ -77,6 +78,8 @@ class DaemonConfig:
     max_tickets: int | None = None
     active_hours: str | None = None   # 예: "01:00-07:00". None이면 항상
     pause_file: Path = PAUSE_FILE
+    merge_at: str | None = None       # 예: "07:00". 하루 한 번 이 시각 이후 첫 사이클에 자동 머지. None이면 안 함
+    merge: MergeConfig = field(default_factory=MergeConfig)
 
 
 class Daemon:
@@ -99,6 +102,10 @@ class Daemon:
         self.root = self.settings.repo_root
         self.processed = 0
         self.window = parse_active_hours(config.active_hours)
+        self.merge_time = None
+        if config.merge_at:
+            h, m = (int(x) for x in str(config.merge_at).split(":"))
+            self.merge_time = dt.time(h, m)
 
     # ---------- 메인 루프 ----------
     def run(self) -> int:
@@ -129,8 +136,36 @@ class Daemon:
             return f"outside active hours {self.config.active_hours} (now {now.strftime('%H:%M')})"
         return None
 
+    def merge_due(self, now: dt.datetime | None = None, state: dict[str, Any] | None = None) -> bool:
+        """오늘 아직 머지를 안 했고 merge_at 시각이 지났으면 True."""
+        if self.merge_time is None:
+            return False
+        now = now or dt.datetime.now()
+        state = state if state is not None else load_state(self.state_file)
+        return now.time() >= self.merge_time and state.get("last_merge_date") != now.date().isoformat()
+
+    def run_daily_merge(self) -> None:
+        state = load_state(self.state_file)
+        self.log("[daemon] ▶ daily merge")
+        report = auto_merge(self.config.merge, root=self.root, log=self.log)
+        state["last_merge_date"] = dt.date.today().isoformat()
+        state["last_merge"] = {"at": report.started_at, "merged": [o.ticket_id for o in report.merged],
+                               "pushed": report.pushed, "note": report.note,
+                               "issues": [f"{o.ticket_id}:{o.result}" for o in report.outcomes if o.result in ("conflict", "verify-failed")]}
+        save_state(state, self.state_file)
+        self.log(f"[daemon] ■ daily merge: merged={len(report.merged)} pushed={report.pushed}")
+
     def tick(self) -> bool:
         """한 사이클. 작업을 했으면 True, 대기해야 하면 False."""
+        if self.config.pause_file.exists():
+            self.log(f"[daemon] paused: {self.paused_reason()}")
+            return False
+
+        # 일일 머지는 작동 시간대와 무관하게(LLM 불필요) 하루 한 번
+        if self.merge_due():
+            self.run_daily_merge()
+            return True
+
         reason = self.paused_reason()
         if reason:
             self.log(f"[daemon] paused: {reason}")

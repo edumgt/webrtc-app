@@ -88,3 +88,14 @@ daemon:
   # 작동 시간대. 이 시간 밖에서는 새 티켓을 시작하지 않는다 (진행 중인 티켓은 마친다).
   # 자정을 넘는 구간 가능(예: "22:00-06:00"). 비우면 항상 작동.
   active_hours: "01:00-07:00"
+  # 하루 한 번 자동 머지 시각(LLM 불필요, 작동 시간대와 무관). 비우면 자동 머지 안 함.
+  merge_at: "07:00"
+
+auto_merge:
+  # 대상: 티켓 상태가 review(QA PASS)인 hermes/<ID> 브랜치만.
+  # 절차: git pull --rebase → merge --no-ff → 테스트·빌드 검증 → 티켓 done → push → 브랜치 삭제
+  # 충돌이나 검증 실패 시 머지를 되돌리고 review 상태로 남긴다(사람 확인).
+  verify: true
+  verify_timeout: 900
+  push: true
+  delete_merged_branches: true

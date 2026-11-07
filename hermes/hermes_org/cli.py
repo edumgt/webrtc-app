@@ -136,6 +136,9 @@ def cmd_status(_: argparse.Namespace) -> int:
 
     if PAUSE_FILE.exists():
         print(f"⏸ 데몬 일시정지 중 ({PAUSE_FILE.read_text(encoding='utf-8').strip()}) → hermes resume")
+    last = load_state().get("last_merge")
+    if last:
+        print(f"마지막 자동 머지: {last.get('at')} merged={last.get('merged')} pushed={last.get('pushed')}" + (f" issues={last['issues']}" if last.get("issues") else ""))
     print(f"승인 대기 (proposed): {len(proposed)}")
     for t in proposed:
         print(f"  {t.id} [{t.priority}] {t.title}   → hermes approve {t.id}")
@@ -167,10 +170,38 @@ def cmd_resume(_: argparse.Namespace) -> int:
     return 0
 
 
+def _merge_config(org: dict, push_override: bool | None = None) -> "MergeConfig":
+    from .merge import MergeConfig  # noqa: WPS433
+
+    mcfg = org.get("auto_merge", {})
+    return MergeConfig(
+        base_branch=org.get("daemon", {}).get("base_branch", "main"),
+        push=bool(mcfg.get("push", True)) if push_override is None else push_override,
+        delete_merged_branches=bool(mcfg.get("delete_merged_branches", True)),
+        verify=bool(mcfg.get("verify", True)),
+        verify_timeout=int(mcfg.get("verify_timeout", 900)),
+    )
+
+
+def cmd_merge(args: argparse.Namespace) -> int:
+    from .merge import auto_merge  # noqa: WPS433
+
+    org = load_org()
+    report = auto_merge(_merge_config(org, push_override=False if args.no_push else None), dry_run=args.dry_run)
+    for o in report.outcomes:
+        print(f"{o.result:14s} {o.branch} ({o.ticket_id}) {o.detail.splitlines()[0] if o.detail else ''}")
+    if report.note:
+        print(f"note: {report.note}")
+    print(f"merged={len(report.merged)} pushed={report.pushed}")
+    return 0 if not any(o.result in ("conflict", "verify-failed") for o in report.outcomes) else 2
+
+
 def cmd_daemon(args: argparse.Namespace) -> int:
     org = load_org()
     dcfg = org.get("daemon", {})
     config = DaemonConfig(
+        merge_at=(args.merge_at if args.merge_at is not None else dcfg.get("merge_at")) or None,
+        merge=_merge_config(org),
         active_hours=args.active_hours if args.active_hours is not None else dcfg.get("active_hours") or None,
         base_branch=args.base or dcfg.get("base_branch", "main"),
         poll_seconds=args.poll or int(dcfg.get("poll_seconds", 600)),
@@ -231,7 +262,13 @@ def build_parser() -> argparse.ArgumentParser:
     dm.add_argument("--base", default=None, help="기준 브랜치 (기본 org.yaml daemon.base_branch)")
     dm.add_argument("--max-tickets", type=int, default=None, help="이 수만큼 처리 후 종료")
     dm.add_argument("--active-hours", default=None, help='작동 시간대, 예: "01:00-07:00" (빈 문자열이면 항상)')
+    dm.add_argument("--merge-at", default=None, help='일일 자동 머지 시각, 예: "07:00" (빈 문자열이면 안 함)')
     dm.set_defaults(func=cmd_daemon)
+
+    mg = sub.add_parser("merge", help="QA PASS(review) 브랜치를 기준 브랜치에 머지·검증·푸시 (데몬이 하루 한 번 자동 실행)")
+    mg.add_argument("--dry-run", action="store_true", help="대상만 보여주고 머지하지 않음")
+    mg.add_argument("--no-push", action="store_true", help="원격에 푸시하지 않음")
+    mg.set_defaults(func=cmd_merge)
 
     sub.add_parser("pause", help="데몬 일시정지 (PAUSE 파일 생성)").set_defaults(func=cmd_pause)
     sub.add_parser("resume", help="데몬 재개 (PAUSE 파일 삭제)").set_defaults(func=cmd_resume)

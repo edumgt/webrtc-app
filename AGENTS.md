@@ -12,7 +12,8 @@
 ## 자율 모드에서의 역할 분담
 
 - 데몬(`hermes daemon`)은 `todo` 티켓을 브랜치 `hermes/HX-nnn`에서 처리해 커밋하고, 백로그가 비면 Tech Lead가 `status: proposed` 티켓을 제안합니다.
-- **사람만 할 수 있는 것**: 제안 승인(`hermes approve`), 브랜치 리뷰와 `main` 머지, `git push`, blocked 티켓 처리. 에이전트는 이를 대신하지 않습니다.
+- 하루 한 번(`daemon.merge_at`) QA PASS 브랜치를 테스트·빌드 검증 후 `main`에 자동 머지·push합니다. 검증 실패나 충돌은 머지하지 않고 사람에게 남깁니다.
+- **사람만 할 수 있는 것**: 제안 승인(`hermes approve`), 자동 머지 전 리뷰(막으려면 티켓을 `blocked`로), blocked 티켓 처리.
 - 확인할 것이 있는지는 `uv run hermes status`로 봅니다.
 
 ## 코드 규약
