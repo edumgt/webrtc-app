@@ -7,3 +7,4 @@ workspace/*/logs/
 workspace/daemon-state.json
 workspace/daemon.log
 workspace/discover/
+workspace/PAUSE

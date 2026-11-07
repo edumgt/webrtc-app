@@ -8,7 +8,14 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 UNIT_SRC="$REPO_DIR/hermes/systemd/hermes-daemon.service"
 UNIT_DST="/etc/systemd/system/hermes-daemon.service"
 UV_BIN="$(command -v uv || echo /root/.local/bin/uv)"
-OLLAMA_HOST_VALUE="${OLLAMA_HOST:-$(ip route 2>/dev/null | awk '/default/{print $3; exit}'):11434}"
+# Ollama 주소: 환경변수 OLLAMA_HOST 우선. 없으면 WSL은 Windows 호스트(기본 게이트웨이), 그 외는 localhost.
+if [ -n "${OLLAMA_HOST:-}" ]; then
+  OLLAMA_HOST_VALUE="$OLLAMA_HOST"
+elif grep -qi microsoft /proc/version 2>/dev/null; then
+  OLLAMA_HOST_VALUE="$(ip route 2>/dev/null | awk '/default/{print $3; exit}'):11434"
+else
+  OLLAMA_HOST_VALUE="localhost:11434"
+fi
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "root로 실행하세요 (sudo $0)"; exit 1

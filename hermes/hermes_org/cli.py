@@ -6,7 +6,7 @@ import sys
 
 from .agents import load_org
 from .backlog import TicketError, find_ticket, load_tickets, new_ticket
-from .daemon import Daemon, DaemonConfig, load_state
+from .daemon import PAUSE_FILE, Daemon, DaemonConfig, load_state
 from .llm import check_endpoint
 from .pipeline import Pipeline
 from .settings import Settings
@@ -26,8 +26,19 @@ def cmd_check(_: argparse.Namespace) -> int:
         print(f"✗ model '{s.model}' not found on endpoint (ollama pull {s.model})")
         return 1
     try:
-        load_org()
+        org = load_org()
         print("✓ config/org.yaml ok")
+        missing = sorted({
+            str(r["model"]) for r in org["roles"].values()
+            if r.get("model") and info["models"] and str(r["model"]) not in info["models"]
+        })
+        if missing:
+            for m in missing:
+                print(f"✗ role model '{m}' not found on endpoint (ollama pull {m})")
+            return 1
+        overrides = {k: r["model"] for k, r in org["roles"].items() if r.get("model")}
+        if overrides:
+            print("✓ role models ok: " + ", ".join(f"{k}={v}" for k, v in overrides.items()))
         tickets = load_tickets()
         print(f"✓ backlog ok ({len(tickets)} tickets)")
     except (TicketError, ValueError) as exc:
@@ -123,6 +134,8 @@ def cmd_status(_: argparse.Namespace) -> int:
     blocked = {tid: e for tid, e in state.items() if e.get("status") == "blocked"}
     todo = [t for t in tickets if t.status == "todo" and t.id not in state]
 
+    if PAUSE_FILE.exists():
+        print(f"⏸ 데몬 일시정지 중 ({PAUSE_FILE.read_text(encoding='utf-8').strip()}) → hermes resume")
     print(f"승인 대기 (proposed): {len(proposed)}")
     for t in proposed:
         print(f"  {t.id} [{t.priority}] {t.title}   → hermes approve {t.id}")
@@ -138,10 +151,27 @@ def cmd_status(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_pause(_: argparse.Namespace) -> int:
+    PAUSE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    PAUSE_FILE.write_text(f"paused at {__import__('time').strftime('%Y-%m-%d %H:%M:%S')}\n", encoding="utf-8")
+    print(f"✓ paused (진행 중인 티켓은 마친 뒤 대기). resume: hermes resume")
+    return 0
+
+
+def cmd_resume(_: argparse.Namespace) -> int:
+    if PAUSE_FILE.exists():
+        PAUSE_FILE.unlink()
+        print("✓ resumed")
+    else:
+        print("(not paused)")
+    return 0
+
+
 def cmd_daemon(args: argparse.Namespace) -> int:
     org = load_org()
     dcfg = org.get("daemon", {})
     config = DaemonConfig(
+        active_hours=args.active_hours if args.active_hours is not None else dcfg.get("active_hours") or None,
         base_branch=args.base or dcfg.get("base_branch", "main"),
         poll_seconds=args.poll or int(dcfg.get("poll_seconds", 600)),
         endpoint_retry_seconds=int(dcfg.get("endpoint_retry_seconds", 60)),
@@ -200,7 +230,11 @@ def build_parser() -> argparse.ArgumentParser:
     dm.add_argument("--poll", type=int, default=None, help="대기 시간(초)")
     dm.add_argument("--base", default=None, help="기준 브랜치 (기본 org.yaml daemon.base_branch)")
     dm.add_argument("--max-tickets", type=int, default=None, help="이 수만큼 처리 후 종료")
+    dm.add_argument("--active-hours", default=None, help='작동 시간대, 예: "01:00-07:00" (빈 문자열이면 항상)')
     dm.set_defaults(func=cmd_daemon)
+
+    sub.add_parser("pause", help="데몬 일시정지 (PAUSE 파일 생성)").set_defaults(func=cmd_pause)
+    sub.add_parser("resume", help="데몬 재개 (PAUSE 파일 삭제)").set_defaults(func=cmd_resume)
 
     n = sub.add_parser("new", help="새 티켓 파일 생성")
     n.add_argument("id", help="예: HX-010")

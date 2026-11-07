@@ -10,6 +10,8 @@ WorkingDirectory=/home/ubuntu/webrtc-app/hermes
 Environment=OLLAMA_HOST=172.29.32.1:11434
 Environment=PATH=/root/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/root/.local/bin/uv run hermes daemon
+Nice=10
+IOSchedulingClass=idle
 Restart=always
 RestartSec=30
 StandardOutput=append:/home/ubuntu/webrtc-app/hermes/workspace/daemon.log
