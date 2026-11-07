@@ -33,6 +33,31 @@ hermes/
 | 컨텍스트 윈도우 관리 | 단계 산출물은 파일로 저장하고 다음 단계에는 **발췌(6,000자) + 파일 경로**만 전달. 에이전트는 필요 시 `read_file`로 추가 조회 |
 | 로컬 서빙 | Ollama 기본 (`hermes3:8b`), vLLM/LM Studio/OpenRouter 등 OpenAI 호환 API 지원 |
 
+## 다른 PC에서 받아 쓰기 (이식성)
+
+저장소에는 기계 종속 정보가 없습니다. 아래만 갖추면 같은 방식으로 동작합니다.
+
+| 필요 | 비고 |
+|---|---|
+| git, Node 20+, uv (Python 3.10~3.13) | `uv sync`가 가상환경을 자동 생성 |
+| Ollama + 모델 2개 | `ollama pull hermes3:8b`, `ollama pull qwen2.5-coder:7b` (Tech Lead용, 약 9GB 다운로드) |
+| `hermes/.env` | `cp .env.example .env`. Ollama가 같은 기계면 수정 불필요. WSL에서 Windows Ollama를 쓰면 `OLLAMA_HOST=<게이트웨이IP>:11434`를 셸에 export하거나 `.env`의 `HERMES_BASE_URL`에 지정 |
+| 작업 트리 깨끗 | 데몬은 `main`이 깨끗할 때만 브랜치를 만듭니다 |
+
+```bash
+git clone <repo> && cd webrtc-app
+(cd signaling && npm ci) && (cd frontend && npm ci)
+cd hermes && cp .env.example .env && uv sync --extra dev
+uv run hermes check      # 엔드포인트, 모델 2개, org.yaml, 백로그를 모두 검증
+uv run hermes status
+```
+
+기계마다 달라지는 것:
+
+- **처리 기록** `workspace/daemon-state.json`은 커밋되지 않습니다. 새 PC는 `main`의 티켓 상태(`todo`)만 보고 시작하므로, 이전 PC에서 처리한 `hermes/HX-nnn` 브랜치를 **push**해 두고 머지(또는 티켓 `done`)해야 중복 처리가 없습니다.
+- **속도**: GPU 메모리에 따라 수 분에서 수십 분까지 차이가 납니다. GPU가 없으면 CPU 추론으로 매우 느립니다.
+- **자동 시작**: systemd 유닛의 경로와 Ollama 주소는 `scripts/install-hermes-daemon.sh`가 그 PC에 맞게 다시 씁니다. macOS는 launchd, Windows 네이티브는 작업 스케줄러를 써야 하며(유닛 미제공), Windows 네이티브에서의 셸 도구 동작은 검증되지 않았습니다. Linux/WSL/macOS를 기준으로 합니다.
+
 ## 시작하기
 
 ```bash
@@ -43,6 +68,9 @@ ollama pull hermes3:8b
 cd hermes
 cp .env.example .env           # 필요 시 엔드포인트/모델 변경
 uv sync --extra dev
+
+# (선택) 전역 명령으로 설치: 이후 어디서든 `hermes <command>`
+uv tool install --editable ./hermes     # 저장소 루트에서. 제거: uv tool uninstall hermes-org
 
 # 3) 점검
 uv run hermes check            # 엔드포인트, 모델, org.yaml, 백로그 검증
@@ -74,6 +102,8 @@ HERMES_API_KEY=NA
 uv run hermes daemon             # 백로그 순회 (Ctrl+C로 중지)
 uv run hermes daemon --once      # 한 사이클만 (테스트용)
 uv run hermes status             # 사람이 확인할 항목 요약
+uv run hermes pause / resume     # 일시정지 / 재개
+# 저장소 루트에서는 scripts/hermes <command>
 ```
 
 데몬이 하는 일 (한 사이클):
@@ -83,7 +113,7 @@ uv run hermes status             # 사람이 확인할 항목 요약
 3. `todo` 티켓 중 우선순위(P0 먼저)가 가장 높은 것을 골라 `hermes/<ID>` 브랜치에서 PM → Design → Dev ⇄ QA 실행 후 **브랜치에 커밋**.
    - QA PASS → 티켓 `review`, FAIL/오류 → `blocked`. 처리 기록은 `workspace/daemon-state.json`.
 4. `todo`가 비면 **Tech Lead** 에이전트가 저장소를 분석해 새 티켓을 `status: proposed`로 제안하고 기준 브랜치에 커밋 (승인 대기 티켓이 5개 이상이면 쉼).
-5. 할 일이 없으면 10분 대기 후 반복.
+5. 할 일이 없으면 10분 대기 후 반복. 작동 시간대(`active_hours`) 밖이거나 PAUSE 파일이 있으면 새 작업을 시작하지 않습니다.
 
 데몬이 **하지 않는** 일: `main`에 머지, `git push`, 제안 티켓 자동 승인. 사람이 하는 일:
 
@@ -92,6 +122,13 @@ uv run hermes status             # 사람이 확인할 항목 요약
 | `hermes status`에 승인 대기(proposed) | 티켓 파일을 읽고 `uv run hermes approve HX-0nn` (거절은 파일 삭제 또는 `status: blocked`) |
 | 리뷰 대기(review) | `git diff main..hermes/HX-0nn`와 `workspace/HX-0nn/qa-report.md` 검토 → PR/머지 → 티켓 `status: done` |
 | 막힘(blocked) | 브랜치의 산출물을 보고 티켓을 고쳐 `status: todo`로 되돌리거나 폐기. `daemon-state.json`에서 해당 ID를 지우면 재시도 |
+
+### PC 성능 보호: 작동 시간대와 일시정지
+
+- **작동 시간대**: `config/org.yaml`의 `daemon.active_hours`(기본 `"01:00-07:00"`). 이 시간 밖에서는 새 티켓을 시작하지 않고 대기합니다. 진행 중이던 티켓은 끝까지 마칩니다. 자정을 넘는 구간(`"22:00-06:00"`)도 됩니다. 항상 돌리려면 빈 문자열로 두거나 `--active-hours ""`.
+- **일시정지**: `scripts/hermes pause` (PAUSE 파일 생성) / `scripts/hermes resume`. 일시정지 중엔 LLM 엔드포인트도 두드리지 않습니다. `hermes status` 첫 줄에 표시됩니다.
+- **우선순위**: systemd 유닛은 `Nice=10`, I/O는 idle 클래스로 돌아 다른 작업에 양보합니다.
+- **추론 부하는 Windows 쪽 Ollama**에서 발생합니다. GPU 메모리를 비워 두면(다른 GPU 앱 종료) CPU 점유가 크게 줄고, Windows 환경변수 `OLLAMA_KEEP_ALIVE=1m`(유휴 시 모델 언로드), `OLLAMA_MAX_LOADED_MODELS=1`, `OLLAMA_NUM_THREAD=4`(CPU 추론 시)를 권합니다. WSL 자체 상한은 `%USERPROFILE%\.wslconfig`의 `memory=8GB`, `processors=4`.
 
 ### WSL 부팅 시 자동 시작 (systemd)
 

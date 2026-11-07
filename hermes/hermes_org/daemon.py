@@ -5,7 +5,9 @@
 """
 from __future__ import annotations
 
+import datetime as dt
 import json
+import re
 import time
 import traceback
 from dataclasses import dataclass
@@ -21,6 +23,28 @@ from .tools import git
 
 Logger = Callable[[str], None]
 STATE_FILE = WORKSPACE_DIR / "daemon-state.json"
+PAUSE_FILE = WORKSPACE_DIR / "PAUSE"
+_HOURS = re.compile(r"^\s*(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})\s*$")
+
+
+def parse_active_hours(spec: str | None) -> tuple[dt.time, dt.time] | None:
+    """'01:00-07:00' → (time, time). 비어 있으면 None(항상 활성). 자정을 넘는 구간('22:00-06:00')도 허용."""
+    if not spec or not str(spec).strip():
+        return None
+    m = _HOURS.match(str(spec))
+    if not m:
+        raise ValueError(f"active_hours must look like 'HH:MM-HH:MM', got {spec!r}")
+    h1, m1, h2, m2 = (int(x) for x in m.groups())
+    return dt.time(h1, m1), dt.time(h2, m2)
+
+
+def is_active(now: dt.time, window: tuple[dt.time, dt.time] | None) -> bool:
+    if window is None:
+        return True
+    start, end = window
+    if start <= end:
+        return start <= now < end
+    return now >= start or now < end  # 자정을 넘는 구간
 PRIORITY_ORDER = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
 
 
@@ -51,6 +75,8 @@ class DaemonConfig:
     discover: bool = True
     once: bool = False
     max_tickets: int | None = None
+    active_hours: str | None = None   # 예: "01:00-07:00". None이면 항상
+    pause_file: Path = PAUSE_FILE
 
 
 class Daemon:
@@ -72,6 +98,7 @@ class Daemon:
         self.sleep = sleep
         self.root = self.settings.repo_root
         self.processed = 0
+        self.window = parse_active_hours(config.active_hours)
 
     # ---------- 메인 루프 ----------
     def run(self) -> int:
@@ -93,8 +120,22 @@ class Daemon:
             if not did_work:
                 self.sleep(self.config.poll_seconds)
 
+    def paused_reason(self, now: dt.time | None = None) -> str | None:
+        """일시정지 사유. None이면 작업 가능."""
+        if self.config.pause_file.exists():
+            return f"pause file present: {self.config.pause_file} (remove it or run `hermes resume`)"
+        now = now or dt.datetime.now().time()
+        if not is_active(now, self.window):
+            return f"outside active hours {self.config.active_hours} (now {now.strftime('%H:%M')})"
+        return None
+
     def tick(self) -> bool:
         """한 사이클. 작업을 했으면 True, 대기해야 하면 False."""
+        reason = self.paused_reason()
+        if reason:
+            self.log(f"[daemon] paused: {reason}")
+            return False
+
         info = check_endpoint(self.settings)
         if not info["ok"]:
             self.log(f"[daemon] LLM endpoint unreachable ({info['error']}); retry in {self.config.endpoint_retry_seconds}s")

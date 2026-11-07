@@ -186,3 +186,40 @@ def test_real_repo_digest_is_bounded():
 
     d = repo_digest(REPO_ROOT)
     assert len(d) <= 5000 and "useWebRTC.js" in d
+
+
+def test_parse_active_hours_and_is_active():
+    import datetime as dt
+
+    from hermes_org.daemon import is_active, parse_active_hours
+
+    assert parse_active_hours("") is None and parse_active_hours(None) is None
+    w = parse_active_hours("01:00-07:00")
+    assert is_active(dt.time(3, 0), w) and not is_active(dt.time(12, 0), w) and not is_active(dt.time(7, 0), w)
+    night = parse_active_hours("22:00-06:00")
+    assert is_active(dt.time(23, 30), night) and is_active(dt.time(2, 0), night) and not is_active(dt.time(12, 0), night)
+    assert is_active(dt.time(12, 0), None)
+    with pytest.raises(ValueError):
+        parse_active_hours("night")
+
+
+def test_daemon_pauses_on_pause_file_and_outside_hours(tmp_path: Path, monkeypatch):
+    import datetime as dt
+
+    from hermes_org import daemon as d
+    from hermes_org.settings import Settings
+
+    calls = []
+    monkeypatch.setattr(d, "check_endpoint", lambda s: calls.append("endpoint") or {"ok": True})
+    pause = tmp_path / "PAUSE"
+    logs = []
+    dm = d.Daemon(
+        d.DaemonConfig(once=True, active_hours="01:00-07:00", pause_file=pause),
+        settings=Settings(repo_root=tmp_path), backlog_dir=tmp_path, state_file=tmp_path / "s.json",
+        log=logs.append, sleep=lambda s: None,
+    )
+    assert dm.paused_reason(dt.time(3, 0)) is None
+    assert "outside active hours" in dm.paused_reason(dt.time(12, 0))
+    pause.write_text("x")
+    assert "pause file" in dm.paused_reason(dt.time(3, 0))
+    assert dm.tick() is False and calls == []   # 일시정지 중엔 엔드포인트도 두드리지 않음
